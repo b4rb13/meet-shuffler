@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { useSidePanelSession } from "@/hooks/use-meet-session";
 import { useParticipants } from "@/hooks/use-participants";
@@ -25,11 +25,13 @@ import {
   SpinnerGapIcon,
   TimerIcon,
   StopIcon,
+  CheckIcon,
 } from "@phosphor-icons/react";
 
-const Timer = dynamic(() => import("@/components/timer").then((m) => ({ default: m.Timer })), {
-  ssr: false,
-});
+const Timer = dynamic(
+  () => import("@/components/timer").then((m) => ({ default: m.Timer })),
+  { ssr: false },
+);
 
 const DEFAULT_TIMER_SECONDS = 90;
 
@@ -48,6 +50,9 @@ export default function SidePanelPage() {
 
   const [shuffledOrder, setShuffledOrder] = useState<ShuffledParticipant[]>([]);
   const [currentSpeakerIndex, setCurrentSpeakerIndex] = useState(0);
+  const [completedIds, setCompletedIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [isShared, setIsShared] = useState(false);
   const [timerEnabled, setTimerEnabled] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(DEFAULT_TIMER_SECONDS);
@@ -57,6 +62,7 @@ export default function SidePanelPage() {
     const order = shuffleParticipants(participants);
     setShuffledOrder(order);
     setCurrentSpeakerIndex(0);
+    setCompletedIds(new Set());
     setIsShared(false);
   }, [participants]);
 
@@ -66,11 +72,81 @@ export default function SidePanelPage() {
       if (next >= shuffledOrder.length) return prev;
       return next;
     });
-  }, [shuffledOrder.length]);
+    if (shuffledOrder[currentSpeakerIndex]) {
+      setCompletedIds(
+        (prev) => new Set([...prev, shuffledOrder[currentSpeakerIndex].id]),
+      );
+    }
+  }, [shuffledOrder, currentSpeakerIndex]);
+
+  const handleSetCurrentSpeaker = useCallback(
+    (index: number) => {
+      setCurrentSpeakerIndex(index);
+    },
+    [],
+  );
+
+  const handleToggleCompleted = useCallback((id: string) => {
+    setCompletedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleMoveUp = useCallback(
+    (index: number) => {
+      if (index <= 0) return;
+      setShuffledOrder((prev) => {
+        const next = [...prev];
+        [next[index - 1], next[index]] = [next[index], next[index - 1]];
+        return next.map((p, i) => ({ ...p, position: i + 1 }));
+      });
+      if (currentSpeakerIndex === index) {
+        setCurrentSpeakerIndex(index - 1);
+      } else if (currentSpeakerIndex === index - 1) {
+        setCurrentSpeakerIndex(index);
+      }
+    },
+    [currentSpeakerIndex],
+  );
+
+  const handleMoveDown = useCallback(
+    (index: number) => {
+      setShuffledOrder((prev) => {
+        if (index >= prev.length - 1) return prev;
+        const next = [...prev];
+        [next[index], next[index + 1]] = [next[index + 1], next[index]];
+        return next.map((p, i) => ({ ...p, position: i + 1 }));
+      });
+      if (currentSpeakerIndex === index) {
+        setCurrentSpeakerIndex(index + 1);
+      } else if (currentSpeakerIndex === index + 1) {
+        setCurrentSpeakerIndex(index);
+      }
+    },
+    [currentSpeakerIndex],
+  );
 
   const handleCopy = useCallback(async () => {
     const text = formatShuffledOrder(shuffledOrder);
-    await navigator.clipboard.writeText(text);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Fallback for iframe restrictions
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }, [shuffledOrder]);
@@ -79,9 +155,10 @@ export default function SidePanelPage() {
     return {
       shuffledOrder,
       currentSpeakerIndex,
+      completedIds: [...completedIds],
       timerSecondsPerPerson: timerEnabled ? timerSeconds : 0,
     };
-  }, [shuffledOrder, currentSpeakerIndex, timerEnabled, timerSeconds]);
+  }, [shuffledOrder, currentSpeakerIndex, completedIds, timerEnabled, timerSeconds]);
 
   const handleShareToMainStage = useCallback(async () => {
     if (!client) return;
@@ -93,7 +170,6 @@ export default function SidePanelPage() {
       });
       setIsShared(true);
     } catch {
-      // Activity may already be ongoing, try updating state instead
       try {
         const state = buildSharedState();
         await client.setActivityStartingState({
@@ -131,18 +207,14 @@ export default function SidePanelPage() {
     handleAdvanceSpeaker();
   }, [handleAdvanceSpeaker]);
 
-  // Sync state to main stage whenever speaker advances
-  const handleAdvanceAndSync = useCallback(() => {
-    handleAdvanceSpeaker();
-    if (isShared) {
-      setTimeout(() => handleSyncToMainStage(), 100);
-    }
-  }, [handleAdvanceSpeaker, isShared, handleSyncToMainStage]);
-
   const activeCount = participants.filter((p) => !p.isExcluded).length;
   const hasParticipants = participants.length > 0;
   const hasOrder = shuffledOrder.length > 0;
-  const standupDone = hasOrder && currentSpeakerIndex >= shuffledOrder.length;
+  const allDone = useMemo(
+    () =>
+      hasOrder && shuffledOrder.every((p) => completedIds.has(p.id)),
+    [hasOrder, shuffledOrder, completedIds],
+  );
 
   if (!isReady) {
     return (
@@ -196,7 +268,10 @@ export default function SidePanelPage() {
             className="flex-1"
           >
             {isLoading ? (
-              <SpinnerGapIcon className="animate-spin" data-icon="inline-start" />
+              <SpinnerGapIcon
+                className="animate-spin"
+                data-icon="inline-start"
+              />
             ) : (
               <UsersIcon data-icon="inline-start" />
             )}
@@ -262,7 +337,7 @@ export default function SidePanelPage() {
             <Separator />
 
             {/* Timer */}
-            {timerEnabled && !standupDone ? (
+            {timerEnabled && !allDone ? (
               <Timer
                 key={currentSpeakerIndex}
                 secondsPerPerson={timerSeconds}
@@ -273,10 +348,14 @@ export default function SidePanelPage() {
             <ShuffledOrder
               order={shuffledOrder}
               currentSpeakerIndex={currentSpeakerIndex}
-              onAdvanceSpeaker={handleAdvanceAndSync}
+              completedSet={completedIds}
+              onSetCurrentSpeaker={handleSetCurrentSpeaker}
+              onToggleCompleted={handleToggleCompleted}
+              onMoveUp={handleMoveUp}
+              onMoveDown={handleMoveDown}
             />
 
-            {standupDone ? (
+            {allDone ? (
               <Card size="sm">
                 <CardContent className="text-center text-xs font-medium text-primary">
                   Standup complete!
@@ -319,7 +398,11 @@ export default function SidePanelPage() {
                 </Button>
               )}
               <Button variant="ghost" size="sm" onClick={handleCopy}>
-                <CopyIcon data-icon="inline-start" />
+                {copied ? (
+                  <CheckIcon data-icon="inline-start" />
+                ) : (
+                  <CopyIcon data-icon="inline-start" />
+                )}
                 {copied ? "Copied!" : "Copy to Clipboard"}
               </Button>
             </div>

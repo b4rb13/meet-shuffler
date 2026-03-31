@@ -7,6 +7,7 @@
     "meet": {
       "web": {
         "sidePanelUrl": "https://meet-shuffler.vercel.app/sidepanel",
+        "mainStageUrl": "https://meet-shuffler.vercel.app/mainstage",
         "addOnOrigins": ["https://meet-shuffler.vercel.app"],
         "logoUrl": "https://meet-shuffler.vercel.app/logo.svg",
         "darkModeLogoUrl": "https://meet-shuffler.vercel.app/logo-dark.svg"

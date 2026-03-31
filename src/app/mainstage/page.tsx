@@ -3,7 +3,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useMainStageSession } from "@/hooks/use-meet-session";
 import type { SharedState, ShuffledParticipant } from "@/lib/types";
-import { PushPinIcon, ShuffleIcon, SpinnerGapIcon } from "@phosphor-icons/react";
+import {
+  PushPinIcon,
+  ShuffleIcon,
+  SpinnerGapIcon,
+  CheckCircleIcon,
+} from "@phosphor-icons/react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
@@ -13,7 +18,6 @@ export default function MainStagePage() {
   const stateRef = useRef(state);
   stateRef.current = state;
 
-  // Load initial state from activity starting state
   useEffect(() => {
     if (!client) return;
 
@@ -32,7 +36,6 @@ export default function MainStagePage() {
     loadInitialState();
   }, [client]);
 
-  // Listen for frame-to-frame messages from side panel
   useEffect(() => {
     if (!client) return;
 
@@ -54,7 +57,16 @@ export default function MainStagePage() {
     const nextIdx = state.currentSpeakerIndex + 1;
     if (nextIdx >= state.shuffledOrder.length) return;
 
-    const newState: SharedState = { ...state, currentSpeakerIndex: nextIdx };
+    const currentId = state.shuffledOrder[state.currentSpeakerIndex]?.id;
+    const newCompletedIds = currentId
+      ? [...new Set([...state.completedIds, currentId])]
+      : state.completedIds;
+
+    const newState: SharedState = {
+      ...state,
+      currentSpeakerIndex: nextIdx,
+      completedIds: newCompletedIds,
+    };
     setState(newState);
 
     try {
@@ -93,8 +105,9 @@ export default function MainStagePage() {
     );
   }
 
-  const { shuffledOrder, currentSpeakerIndex } = state;
-  const standupDone = currentSpeakerIndex >= shuffledOrder.length;
+  const { shuffledOrder, currentSpeakerIndex, completedIds } = state;
+  const completedSet = new Set(completedIds ?? []);
+  const allDone = shuffledOrder.every((p) => completedSet.has(p.id));
 
   return (
     <div className="flex h-screen flex-col bg-background">
@@ -104,7 +117,7 @@ export default function MainStagePage() {
         <h1 className="text-lg font-semibold">Standup Order</h1>
         <div className="ml-auto flex items-center gap-2">
           <Badge variant="outline" className="text-xs">
-            {currentSpeakerIndex + 1} / {shuffledOrder.length}
+            {completedSet.size} / {shuffledOrder.length} done
           </Badge>
         </div>
       </div>
@@ -112,7 +125,7 @@ export default function MainStagePage() {
       {/* Order List */}
       <div className="flex flex-1 flex-col items-center overflow-y-auto px-6 py-6">
         <div className="w-full max-w-xl">
-          {standupDone ? (
+          {allDone ? (
             <div className="flex flex-col items-center gap-4 py-12">
               <div className="text-4xl">&#127881;</div>
               <h2 className="text-xl font-semibold text-primary">
@@ -131,6 +144,7 @@ export default function MainStagePage() {
                 participant={p}
                 index={idx}
                 currentSpeakerIndex={currentSpeakerIndex}
+                isDone={completedSet.has(p.id)}
                 onAdvance={handleAdvance}
               />
             ))}
@@ -145,15 +159,16 @@ function MainStageParticipantRow({
   participant,
   index,
   currentSpeakerIndex,
+  isDone,
   onAdvance,
 }: {
   participant: ShuffledParticipant;
   index: number;
   currentSpeakerIndex: number;
+  isDone: boolean;
   onAdvance: () => void;
 }) {
   const isCurrent = index === currentSpeakerIndex;
-  const isDone = index < currentSpeakerIndex;
 
   return (
     <button
@@ -163,15 +178,16 @@ function MainStageParticipantRow({
       className={cn(
         "flex items-center gap-4 rounded-lg px-4 py-3 text-left transition-all",
         isCurrent &&
+          !isDone &&
           "scale-[1.02] bg-primary/10 ring-2 ring-primary/40 shadow-sm",
-        isDone && "opacity-35",
+        isDone && !isCurrent && "opacity-35",
         !isCurrent && !isDone && "hover:bg-muted/30",
       )}
     >
       <span
         className={cn(
           "flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-bold",
-          isCurrent
+          isCurrent && !isDone
             ? "bg-primary text-primary-foreground shadow-md"
             : isDone
               ? "bg-muted/60 text-muted-foreground"
@@ -185,7 +201,7 @@ function MainStageParticipantRow({
         className={cn(
           "flex-1 text-base font-medium",
           isDone && "line-through",
-          isCurrent && "text-foreground",
+          isCurrent && !isDone && "text-foreground",
         )}
       >
         {participant.displayName}
@@ -195,12 +211,15 @@ function MainStageParticipantRow({
         <PushPinIcon className="size-4 text-muted-foreground" />
       ) : null}
 
-      {isCurrent ? (
+      {isCurrent && !isDone ? (
         <Badge className="animate-pulse text-xs">Now Speaking</Badge>
       ) : null}
 
       {isDone ? (
-        <span className="text-xs text-muted-foreground">Done</span>
+        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+          <CheckCircleIcon className="size-3.5" />
+          Done
+        </span>
       ) : null}
     </button>
   );

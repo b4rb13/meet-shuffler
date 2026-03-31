@@ -17,6 +17,7 @@ export interface ShuffledParticipant {
 export interface SharedState {
   shuffledOrder: ShuffledParticipant[];
   currentSpeakerIndex: number;
+  completedIds: string[];
   timerSecondsPerPerson: number;
 }
 
