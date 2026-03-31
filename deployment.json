@@ -2,14 +2,14 @@
   "addOns": {
     "common": {
       "name": "Meet Shuffler",
-      "logoUrl": "https://YOUR_DOMAIN.vercel.app/logo.png"
+      "logoUrl": "https://meet-shuffler.vercel.app/logo.svg"
     },
     "meet": {
       "web": {
-        "sidePanelUrl": "https://YOUR_DOMAIN.vercel.app/sidepanel",
-        "addOnOrigins": ["https://YOUR_DOMAIN.vercel.app"],
-        "logoUrl": "https://YOUR_DOMAIN.vercel.app/logo-meet.png",
-        "darkModeLogoUrl": "https://YOUR_DOMAIN.vercel.app/logo-meet-dark.png"
+        "sidePanelUrl": "https://meet-shuffler.vercel.app/sidepanel",
+        "addOnOrigins": ["https://meet-shuffler.vercel.app"],
+        "logoUrl": "https://meet-shuffler.vercel.app/logo.svg",
+        "darkModeLogoUrl": "https://meet-shuffler.vercel.app/logo-dark.svg"
       }
     }
   }
