@@ -1,82 +1,56 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useMainStageSession } from "@/hooks/use-meet-session";
-import type { SharedState, ShuffledParticipant } from "@/lib/types";
+import { useSession } from "@/hooks/use-session";
+import type { SessionParticipant } from "@/lib/types";
 import {
   PushPinIcon,
   ShuffleIcon,
   SpinnerGapIcon,
   CheckCircleIcon,
+  MicrophoneIcon,
+  ClockIcon,
+  SmileyIcon,
 } from "@phosphor-icons/react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export default function MainStagePage() {
-  const { client, error: sdkError, isReady } = useMainStageSession();
-  const [state, setState] = useState<SharedState | null>(null);
-  const stateRef = useRef(state);
-  stateRef.current = state;
+  const { client, error: sdkError, isReady: sdkReady } = useMainStageSession();
+  const [meetingCode, setMeetingCode] = useState<string | null>(null);
+  const [showPunchline, setShowPunchline] = useState(false);
 
+  // Get meeting code from URL query param or from the SDK activity starting state
   useEffect(() => {
-    if (!client) return;
+    if (typeof window === "undefined") return;
 
-    async function loadInitialState() {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    if (code) {
+      setMeetingCode(code);
+      return;
+    }
+
+    if (!client) return;
+    async function loadFromActivity() {
       if (!client) return;
       try {
         const starting = await client.getActivityStartingState();
         if (starting.additionalData) {
-          setState(JSON.parse(starting.additionalData) as SharedState);
+          setMeetingCode(starting.additionalData);
         }
       } catch {
-        /* initial state may not be available */
+        /* may not be available */
       }
     }
-
-    loadInitialState();
+    loadFromActivity();
   }, [client]);
 
-  useEffect(() => {
-    if (!client) return;
+  const { session, isLoading } = useSession(meetingCode);
 
-    client.on("frameToFrameMessage", (message) => {
-      if (message.originator === "SIDE_PANEL") {
-        try {
-          const newState = JSON.parse(message.payload) as SharedState;
-          setState(newState);
-        } catch {
-          /* ignore malformed messages */
-        }
-      }
-    });
-  }, [client]);
-
-  const handleAdvance = useCallback(async () => {
-    if (!state || !client) return;
-
-    const nextIdx = state.currentSpeakerIndex + 1;
-    if (nextIdx >= state.shuffledOrder.length) return;
-
-    const currentId = state.shuffledOrder[state.currentSpeakerIndex]?.id;
-    const newCompletedIds = currentId
-      ? [...new Set([...state.completedIds, currentId])]
-      : state.completedIds;
-
-    const newState: SharedState = {
-      ...state,
-      currentSpeakerIndex: nextIdx,
-      completedIds: newCompletedIds,
-    };
-    setState(newState);
-
-    try {
-      await client.notifySidePanel(JSON.stringify(newState));
-    } catch {
-      /* best effort */
-    }
-  }, [state, client]);
-
-  if (!isReady) {
+  if (!sdkReady || isLoading) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
         <SpinnerGapIcon className="size-8 animate-spin text-muted-foreground" />
@@ -94,7 +68,7 @@ export default function MainStagePage() {
     );
   }
 
-  if (!state) {
+  if (!session) {
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-3 bg-background">
         <ShuffleIcon className="size-10 text-muted-foreground/40" />
@@ -105,9 +79,10 @@ export default function MainStagePage() {
     );
   }
 
-  const { shuffledOrder, currentSpeakerIndex, completedIds } = state;
-  const completedSet = new Set(completedIds ?? []);
-  const allDone = shuffledOrder.every((p) => completedSet.has(p.id));
+  const { shuffledOrder } = session;
+  const doneCount = shuffledOrder.filter((p) => p.status === "done").length;
+  const isCompleted = session.state === "completed";
+  const allDone = shuffledOrder.every((p) => p.status === "done");
 
   return (
     <div className="flex h-screen flex-col bg-background">
@@ -117,7 +92,7 @@ export default function MainStagePage() {
         <h1 className="text-lg font-semibold">Standup Order</h1>
         <div className="ml-auto flex items-center gap-2">
           <Badge variant="outline" className="text-xs">
-            {completedSet.size} / {shuffledOrder.length} done
+            {doneCount} / {shuffledOrder.length} done
           </Badge>
         </div>
       </div>
@@ -125,27 +100,51 @@ export default function MainStagePage() {
       {/* Order List */}
       <div className="flex flex-1 flex-col items-center overflow-y-auto px-6 py-6">
         <div className="w-full max-w-xl">
-          {allDone ? (
-            <div className="flex flex-col items-center gap-4 py-12">
+          {(isCompleted || allDone) ? (
+            <div className="flex flex-col items-center gap-4 py-8">
               <div className="text-4xl">&#127881;</div>
               <h2 className="text-xl font-semibold text-primary">
                 Standup Complete!
               </h2>
               <p className="text-sm text-muted-foreground">
-                All {shuffledOrder.length} participants have given their updates.
+                {doneCount} of {shuffledOrder.length} participants gave updates.
               </p>
+
+              {session.joke ? (
+                <div className="mt-4 flex w-full max-w-sm flex-col items-center gap-3 rounded-lg bg-muted/50 px-4 py-4">
+                  <div className="flex items-center gap-1.5">
+                    <SmileyIcon className="size-4 text-primary" />
+                    <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                      Dev Joke
+                    </span>
+                  </div>
+                  <p className="text-center text-sm font-medium">
+                    {session.joke.setup}
+                  </p>
+                  {showPunchline ? (
+                    <p className="animate-in fade-in-0 text-center text-sm text-primary">
+                      {session.joke.delivery}
+                    </p>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowPunchline(true)}
+                    >
+                      Reveal Punchline
+                    </Button>
+                  )}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
           <div className="flex flex-col gap-1">
             {shuffledOrder.map((p, idx) => (
-              <MainStageParticipantRow
+              <MainStageRow
                 key={p.id}
                 participant={p}
                 index={idx}
-                currentSpeakerIndex={currentSpeakerIndex}
-                isDone={completedSet.has(p.id)}
-                onAdvance={handleAdvance}
               />
             ))}
           </div>
@@ -155,53 +154,42 @@ export default function MainStagePage() {
   );
 }
 
-function MainStageParticipantRow({
+function MainStageRow({
   participant,
   index,
-  currentSpeakerIndex,
-  isDone,
-  onAdvance,
 }: {
-  participant: ShuffledParticipant;
+  participant: SessionParticipant;
   index: number;
-  currentSpeakerIndex: number;
-  isDone: boolean;
-  onAdvance: () => void;
 }) {
-  const isCurrent = index === currentSpeakerIndex;
+  const isSpeaking = participant.status === "speaking";
+  const isDone = participant.status === "done";
 
   return (
-    <button
-      type="button"
-      onClick={isCurrent ? onAdvance : undefined}
-      disabled={!isCurrent}
+    <div
       className={cn(
-        "flex items-center gap-4 rounded-lg px-4 py-3 text-left transition-all",
-        isCurrent &&
-          !isDone &&
-          "scale-[1.02] bg-primary/10 ring-2 ring-primary/40 shadow-sm",
-        isDone && !isCurrent && "opacity-35",
-        !isCurrent && !isDone && "hover:bg-muted/30",
+        "flex items-center gap-4 rounded-lg px-4 py-3 transition-all",
+        isSpeaking && "scale-[1.02] bg-primary/10 ring-2 ring-primary/40 shadow-sm",
+        isDone && "opacity-35",
       )}
     >
       <span
         className={cn(
           "flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-bold",
-          isCurrent && !isDone
+          isSpeaking
             ? "bg-primary text-primary-foreground shadow-md"
             : isDone
               ? "bg-muted/60 text-muted-foreground"
               : "bg-muted text-muted-foreground",
         )}
       >
-        {participant.position}
+        {index + 1}
       </span>
 
       <span
         className={cn(
           "flex-1 text-base font-medium",
           isDone && "line-through",
-          isCurrent && !isDone && "text-foreground",
+          isSpeaking && "text-foreground",
         )}
       >
         {participant.displayName}
@@ -211,8 +199,11 @@ function MainStageParticipantRow({
         <PushPinIcon className="size-4 text-muted-foreground" />
       ) : null}
 
-      {isCurrent && !isDone ? (
-        <Badge className="animate-pulse text-xs">Now Speaking</Badge>
+      {isSpeaking ? (
+        <Badge className="animate-pulse gap-1 text-xs">
+          <MicrophoneIcon className="size-3" />
+          Now Speaking
+        </Badge>
       ) : null}
 
       {isDone ? (
@@ -221,6 +212,13 @@ function MainStageParticipantRow({
           Done
         </span>
       ) : null}
-    </button>
+
+      {!isSpeaking && !isDone ? (
+        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+          <ClockIcon className="size-3.5" />
+          Pending
+        </span>
+      ) : null}
+    </div>
   );
 }

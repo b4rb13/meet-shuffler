@@ -26,10 +26,11 @@ export async function createMainStageClient(
   return session.createMainStageClient();
 }
 
-export function getMainStageUrl(): string {
+export function getMainStageUrl(meetingCode?: string): string {
   const origin =
     typeof window !== "undefined"
       ? window.location.origin
       : "http://localhost:3000";
-  return `${origin}/mainstage`;
+  const base = `${origin}/mainstage`;
+  return meetingCode ? `${base}?code=${meetingCode}` : base;
 }

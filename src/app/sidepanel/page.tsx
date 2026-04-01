@@ -1,16 +1,18 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
-import dynamic from "next/dynamic";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useSidePanelSession } from "@/hooks/use-meet-session";
 import { useParticipants } from "@/hooks/use-participants";
-import { shuffleParticipants, formatShuffledOrder } from "@/lib/shuffle";
+import { useSession } from "@/hooks/use-session";
+import { usePresence } from "@/hooks/use-presence";
+import { shuffleParticipants } from "@/lib/shuffle";
+import { createSession, addLateJoiner } from "@/lib/session-store";
 import { getMainStageUrl } from "@/lib/meet-sdk";
-import type { ShuffledParticipant, SharedState } from "@/lib/types";
 
 import { ParticipantList } from "@/components/participant-list";
 import { AddParticipantDialog } from "@/components/add-participant-dialog";
-import { ShuffledOrder } from "@/components/shuffled-order";
+import { SessionView } from "@/components/session-view";
+import { CompletedView } from "@/components/completed-view";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,28 +20,18 @@ import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import {
   ShuffleIcon,
-  ArrowsClockwiseIcon,
-  CopyIcon,
-  BroadcastIcon,
   UsersIcon,
   SpinnerGapIcon,
   TimerIcon,
-  StopIcon,
-  CheckIcon,
 } from "@phosphor-icons/react";
-
-const Timer = dynamic(
-  () => import("@/components/timer").then((m) => ({ default: m.Timer })),
-  { ssr: false },
-);
 
 const DEFAULT_TIMER_SECONDS = 90;
 
 export default function SidePanelPage() {
-  const { client, error: sdkError, isReady } = useSidePanelSession();
+  const { client, error: sdkError, isReady: sdkReady } = useSidePanelSession();
   const {
     participants,
-    isLoading,
+    isLoading: isFetching,
     error: fetchError,
     fetchFromMeet,
     addManual,
@@ -48,175 +40,110 @@ export default function SidePanelPage() {
     setPin,
   } = useParticipants();
 
-  const [shuffledOrder, setShuffledOrder] = useState<ShuffledParticipant[]>([]);
-  const [currentSpeakerIndex, setCurrentSpeakerIndex] = useState(0);
-  const [completedIds, setCompletedIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const [isShared, setIsShared] = useState(false);
+  const [meetingCode, setMeetingCode] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [userDisplayName, setUserDisplayName] = useState<string | null>(null);
   const [timerEnabled, setTimerEnabled] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(DEFAULT_TIMER_SECONDS);
-  const [copied, setCopied] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
 
-  const handleShuffle = useCallback(() => {
-    const order = shuffleParticipants(participants);
-    setShuffledOrder(order);
-    setCurrentSpeakerIndex(0);
-    setCompletedIds(new Set());
-    setIsShared(false);
-  }, [participants]);
+  const { session, isLoading: sessionLoading } = useSession(meetingCode);
+  usePresence(meetingCode, userId, userDisplayName, session);
 
-  const handleAdvanceSpeaker = useCallback(() => {
-    setCurrentSpeakerIndex((prev) => {
-      const next = prev + 1;
-      if (next >= shuffledOrder.length) return prev;
-      return next;
-    });
-    if (shuffledOrder[currentSpeakerIndex]) {
-      setCompletedIds(
-        (prev) => new Set([...prev, shuffledOrder[currentSpeakerIndex].id]),
-      );
-    }
-  }, [shuffledOrder, currentSpeakerIndex]);
-
-  const handleSetCurrentSpeaker = useCallback(
-    (index: number) => {
-      setCurrentSpeakerIndex(index);
-    },
-    [],
-  );
-
-  const handleToggleCompleted = useCallback((id: string) => {
-    setCompletedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  }, []);
-
-  const handleMoveUp = useCallback(
-    (index: number) => {
-      if (index <= 0) return;
-      setShuffledOrder((prev) => {
-        const next = [...prev];
-        [next[index - 1], next[index]] = [next[index], next[index - 1]];
-        return next.map((p, i) => ({ ...p, position: i + 1 }));
-      });
-      if (currentSpeakerIndex === index) {
-        setCurrentSpeakerIndex(index - 1);
-      } else if (currentSpeakerIndex === index - 1) {
-        setCurrentSpeakerIndex(index);
-      }
-    },
-    [currentSpeakerIndex],
-  );
-
-  const handleMoveDown = useCallback(
-    (index: number) => {
-      setShuffledOrder((prev) => {
-        if (index >= prev.length - 1) return prev;
-        const next = [...prev];
-        [next[index], next[index + 1]] = [next[index + 1], next[index]];
-        return next.map((p, i) => ({ ...p, position: i + 1 }));
-      });
-      if (currentSpeakerIndex === index) {
-        setCurrentSpeakerIndex(index + 1);
-      } else if (currentSpeakerIndex === index + 1) {
-        setCurrentSpeakerIndex(index);
-      }
-    },
-    [currentSpeakerIndex],
-  );
-
-  const handleCopy = useCallback(async () => {
-    const text = formatShuffledOrder(shuffledOrder);
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      // Fallback for iframe restrictions
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textarea);
-    }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, [shuffledOrder]);
-
-  const buildSharedState = useCallback((): SharedState => {
-    return {
-      shuffledOrder,
-      currentSpeakerIndex,
-      completedIds: [...completedIds],
-      timerSecondsPerPerson: timerEnabled ? timerSeconds : 0,
-    };
-  }, [shuffledOrder, currentSpeakerIndex, completedIds, timerEnabled, timerSeconds]);
-
-  const handleShareToMainStage = useCallback(async () => {
+  // Get meeting code from the Meet SDK on mount
+  useEffect(() => {
     if (!client) return;
-    try {
-      const state = buildSharedState();
-      await client.startActivity({
-        mainStageUrl: getMainStageUrl(),
-        additionalData: JSON.stringify(state),
-      });
-      setIsShared(true);
-    } catch {
+    let cancelled = false;
+
+    async function init() {
+      if (!client) return;
       try {
-        const state = buildSharedState();
-        await client.setActivityStartingState({
-          mainStageUrl: getMainStageUrl(),
-          additionalData: JSON.stringify(state),
-        });
-        setIsShared(true);
+        const info = await client.getMeetingInfo();
+        if (!cancelled) setMeetingCode(info.meetingCode);
       } catch {
-        /* best effort */
+        /* running outside meet or SDK error */
       }
     }
-  }, [client, buildSharedState]);
-
-  const handleSyncToMainStage = useCallback(async () => {
-    if (!client || !isShared) return;
-    try {
-      const state = buildSharedState();
-      await client.notifyMainStage(JSON.stringify(state));
-    } catch {
-      /* best effort */
-    }
-  }, [client, isShared, buildSharedState]);
-
-  const handleEndActivity = useCallback(async () => {
-    if (!client) return;
-    try {
-      await client.endActivity();
-      setIsShared(false);
-    } catch {
-      /* may not be the initiator */
-    }
+    init();
+    return () => { cancelled = true; };
   }, [client]);
 
-  const handleTimerTimeUp = useCallback(() => {
-    handleAdvanceSpeaker();
-  }, [handleAdvanceSpeaker]);
+  // Set a stable user ID. We use sessionStorage so it persists across reloads in the same tab.
+  const userIdInitialized = useRef(false);
+  useEffect(() => {
+    if (userIdInitialized.current) return;
+    userIdInitialized.current = true;
+
+    let id = sessionStorage.getItem("meet_shuffler_user_id");
+    let name = sessionStorage.getItem("meet_shuffler_user_name");
+    if (!id) {
+      id = crypto.randomUUID();
+      sessionStorage.setItem("meet_shuffler_user_id", id);
+    }
+    if (!name) {
+      name = `User ${id.slice(0, 4)}`;
+      sessionStorage.setItem("meet_shuffler_user_name", name);
+    }
+    setUserId(id);
+    setUserDisplayName(name);
+  }, []);
+
+  // Late joiner: auto-add self to an active session
+  const sessionState = session?.state ?? null;
+  const shuffledOrderLength = session?.shuffledOrder.length ?? 0;
+  const shuffledOrder = session?.shuffledOrder;
+  useEffect(() => {
+    if (sessionState !== "active" || !meetingCode || !userId || !userDisplayName || !shuffledOrder) return;
+
+    const alreadyInList = shuffledOrder.some((p) => p.id === userId);
+    if (!alreadyInList) {
+      addLateJoiner(meetingCode, {
+        id: userId,
+        displayName: userDisplayName,
+        position: shuffledOrderLength + 1,
+        isPinned: false,
+        status: "pending",
+      });
+    }
+  }, [sessionState, meetingCode, userId, userDisplayName, shuffledOrderLength, shuffledOrder]);
+
+  const isOrganizer = session?.organizerId === userId;
+
+  const handleShuffleAndStart = useCallback(async () => {
+    if (!meetingCode || !userId || !userDisplayName) return;
+    setIsCreating(true);
+    try {
+      const order = shuffleParticipants(participants);
+      await createSession(
+        meetingCode,
+        userId,
+        userDisplayName,
+        order,
+        timerEnabled,
+        timerSeconds,
+      );
+
+      // Try to notify other participants via Meet SDK activity
+      if (client) {
+        try {
+          await client.startActivity({
+            mainStageUrl: `${getMainStageUrl()}?code=${meetingCode}`,
+            additionalData: meetingCode,
+          });
+        } catch {
+          /* activity notification is best-effort */
+        }
+      }
+    } finally {
+      setIsCreating(false);
+    }
+  }, [meetingCode, userId, userDisplayName, participants, timerEnabled, timerSeconds, client]);
 
   const activeCount = participants.filter((p) => !p.isExcluded).length;
   const hasParticipants = participants.length > 0;
-  const hasOrder = shuffledOrder.length > 0;
-  const allDone = useMemo(
-    () =>
-      hasOrder && shuffledOrder.every((p) => completedIds.has(p.id)),
-    [hasOrder, shuffledOrder, completedIds],
-  );
 
-  if (!isReady) {
+  // Loading state
+  if (!sdkReady || sessionLoading) {
     return (
       <div className="flex h-screen items-center justify-center">
         <SpinnerGapIcon className="size-6 animate-spin text-muted-foreground" />
@@ -249,165 +176,108 @@ export default function SidePanelPage() {
           </Card>
         ) : null}
 
-        {/* Fetch Error */}
-        {fetchError ? (
-          <Card size="sm">
-            <CardContent className="text-[10px] text-destructive">
-              {fetchError}
-            </CardContent>
-          </Card>
-        ) : null}
-
-        {/* Participant Controls */}
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => fetchFromMeet(client)}
-            disabled={!client || isLoading}
-            className="flex-1"
-          >
-            {isLoading ? (
-              <SpinnerGapIcon
-                className="animate-spin"
-                data-icon="inline-start"
-              />
-            ) : (
-              <UsersIcon data-icon="inline-start" />
-            )}
-            {isLoading ? "Fetching..." : "Fetch from Meet"}
-          </Button>
-          <AddParticipantDialog onAdd={addManual} />
-        </div>
-
-        {/* Participant List */}
-        <ParticipantList
-          participants={participants}
-          onToggleExclude={toggleExclude}
-          onSetPin={setPin}
-          onRemove={remove}
-        />
-
-        {hasParticipants ? (
+        {/* Active session mode */}
+        {session?.state === "active" && meetingCode ? (
+          <SessionView
+            session={session}
+            meetingCode={meetingCode}
+            isOrganizer={isOrganizer}
+          />
+        ) : session?.state === "completed" && meetingCode ? (
+          /* Completed mode */
+          <CompletedView
+            session={session}
+            meetingCode={meetingCode}
+            isOrganizer={isOrganizer}
+          />
+        ) : (
+          /* Setup mode */
           <>
-            <Separator />
-
-            {/* Timer Setting */}
-            <div className="flex items-center gap-2 px-1">
-              <TimerIcon className="size-3.5 text-muted-foreground" />
-              <span className="flex-1 text-xs">Timer per person</span>
-              <Input
-                type="number"
-                min={10}
-                max={600}
-                value={timerSeconds}
-                onChange={(e) =>
-                  setTimerSeconds(Math.max(10, Number(e.target.value)))
-                }
-                className="h-6 w-14 px-1.5 text-center text-xs"
-                disabled={!timerEnabled}
-              />
-              <span className="text-[10px] text-muted-foreground">sec</span>
-              <Switch
-                checked={timerEnabled}
-                onCheckedChange={setTimerEnabled}
-              />
-            </div>
-
-            {/* Shuffle Button */}
-            <Button
-              onClick={handleShuffle}
-              disabled={activeCount < 2}
-              className="w-full"
-              size="lg"
-            >
-              {hasOrder ? (
-                <ArrowsClockwiseIcon data-icon="inline-start" />
-              ) : (
-                <ShuffleIcon data-icon="inline-start" />
-              )}
-              {hasOrder ? "Reshuffle" : "Shuffle Order"}
-            </Button>
-          </>
-        ) : null}
-
-        {/* Shuffled Result */}
-        {hasOrder ? (
-          <>
-            <Separator />
-
-            {/* Timer */}
-            {timerEnabled && !allDone ? (
-              <Timer
-                key={currentSpeakerIndex}
-                secondsPerPerson={timerSeconds}
-                onTimeUp={handleTimerTimeUp}
-              />
-            ) : null}
-
-            <ShuffledOrder
-              order={shuffledOrder}
-              currentSpeakerIndex={currentSpeakerIndex}
-              completedSet={completedIds}
-              onSetCurrentSpeaker={handleSetCurrentSpeaker}
-              onToggleCompleted={handleToggleCompleted}
-              onMoveUp={handleMoveUp}
-              onMoveDown={handleMoveDown}
-            />
-
-            {allDone ? (
+            {/* Fetch Error */}
+            {fetchError ? (
               <Card size="sm">
-                <CardContent className="text-center text-xs font-medium text-primary">
-                  Standup complete!
+                <CardContent className="text-[10px] text-destructive">
+                  {fetchError}
                 </CardContent>
               </Card>
             ) : null}
 
-            <Separator />
-
-            {/* Actions */}
-            <div className="flex flex-col gap-1.5">
-              {isShared ? (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleSyncToMainStage}
-                  >
-                    <BroadcastIcon data-icon="inline-start" />
-                    Sync to Main Stage
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleEndActivity}
-                  >
-                    <StopIcon data-icon="inline-start" />
-                    End Activity
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleShareToMainStage}
-                  disabled={!client}
-                >
-                  <BroadcastIcon data-icon="inline-start" />
-                  Share to Main Stage
-                </Button>
-              )}
-              <Button variant="ghost" size="sm" onClick={handleCopy}>
-                {copied ? (
-                  <CheckIcon data-icon="inline-start" />
+            {/* Participant Controls */}
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fetchFromMeet(client)}
+                disabled={!client || isFetching}
+                className="flex-1"
+              >
+                {isFetching ? (
+                  <SpinnerGapIcon
+                    className="animate-spin"
+                    data-icon="inline-start"
+                  />
                 ) : (
-                  <CopyIcon data-icon="inline-start" />
+                  <UsersIcon data-icon="inline-start" />
                 )}
-                {copied ? "Copied!" : "Copy to Clipboard"}
+                {isFetching ? "Fetching..." : "Fetch from Meet"}
               </Button>
+              <AddParticipantDialog onAdd={addManual} />
             </div>
+
+            {/* Participant List */}
+            <ParticipantList
+              participants={participants}
+              onToggleExclude={toggleExclude}
+              onSetPin={setPin}
+              onRemove={remove}
+            />
+
+            {hasParticipants ? (
+              <>
+                <Separator />
+
+                {/* Timer Setting */}
+                <div className="flex items-center gap-2 px-1">
+                  <TimerIcon className="size-3.5 text-muted-foreground" />
+                  <span className="flex-1 text-xs">Timer per person</span>
+                  <Input
+                    type="number"
+                    min={10}
+                    max={600}
+                    value={timerSeconds}
+                    onChange={(e) =>
+                      setTimerSeconds(Math.max(10, Number(e.target.value)))
+                    }
+                    className="h-6 w-14 px-1.5 text-center text-xs"
+                    disabled={!timerEnabled}
+                  />
+                  <span className="text-[10px] text-muted-foreground">sec</span>
+                  <Switch
+                    checked={timerEnabled}
+                    onCheckedChange={setTimerEnabled}
+                  />
+                </div>
+
+                {/* Shuffle & Start Button */}
+                <Button
+                  onClick={handleShuffleAndStart}
+                  disabled={activeCount < 2 || isCreating || !meetingCode}
+                  className="w-full"
+                  size="lg"
+                >
+                  <ShuffleIcon data-icon="inline-start" />
+                  {isCreating ? "Starting..." : "Shuffle & Start"}
+                </Button>
+
+                {!meetingCode ? (
+                  <p className="text-center text-[10px] text-muted-foreground">
+                    Open this add-on inside a Google Meet call to start a session.
+                  </p>
+                ) : null}
+              </>
+            ) : null}
           </>
-        ) : null}
+        )}
       </div>
     </div>
   );

@@ -7,27 +7,46 @@ export interface Participant {
   isExcluded: boolean;
 }
 
+export type ParticipantStatus = "pending" | "speaking" | "done";
+
+export interface SessionParticipant {
+  id: string;
+  displayName: string;
+  position: number;
+  isPinned: boolean;
+  status: ParticipantStatus;
+}
+
+export interface ConnectedUser {
+  odbc: string;
+  userId: string;
+  displayName: string;
+  lastSeen: number;
+}
+
+export interface Joke {
+  setup: string;
+  delivery: string;
+}
+
+export interface Session {
+  organizerId: string;
+  organizerName: string;
+  state: "active" | "completed";
+  createdAt: number;
+  shuffledOrder: SessionParticipant[];
+  timerEnabled: boolean;
+  timerSecondsPerPerson: number;
+  timerStartedAt: number | null;
+  timerPausedRemaining: number | null;
+  connectedUsers?: Record<string, ConnectedUser>;
+  joke?: Joke | null;
+}
+
+// Legacy types kept for shuffle utility
 export interface ShuffledParticipant {
   id: string;
   displayName: string;
   position: number;
   isPinned: boolean;
-}
-
-export interface SharedState {
-  shuffledOrder: ShuffledParticipant[];
-  currentSpeakerIndex: number;
-  completedIds: string[];
-  timerSecondsPerPerson: number;
-}
-
-export type SidePanelMessageType =
-  | "shuffle_update"
-  | "speaker_advance"
-  | "timer_update"
-  | "end_standup";
-
-export interface SidePanelMessage {
-  type: SidePanelMessageType;
-  payload: SharedState;
 }

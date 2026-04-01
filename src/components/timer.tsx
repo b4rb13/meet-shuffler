@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import {
   PlayIcon,
@@ -9,42 +9,71 @@ import {
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 
-interface TimerProps {
+interface SyncedTimerProps {
   secondsPerPerson: number;
-  onTimeUp: () => void;
+  timerStartedAt: number | null;
+  timerPausedRemaining: number | null;
+  isOrganizer: boolean;
+  onPause: (remaining: number) => void;
+  onResume: () => void;
+  onStart: () => void;
 }
 
-export function Timer({ secondsPerPerson, onTimeUp }: TimerProps) {
+export function SyncedTimer({
+  secondsPerPerson,
+  timerStartedAt,
+  timerPausedRemaining,
+  isOrganizer,
+  onPause,
+  onResume,
+  onStart,
+}: SyncedTimerProps) {
   const [remaining, setRemaining] = useState(secondsPerPerson);
-  const [isPaused, setIsPaused] = useState(false);
-  const onTimeUpRef = useRef(onTimeUp);
-  onTimeUpRef.current = onTimeUp;
+  const isPaused = timerStartedAt === null;
+  const isExpired = remaining <= 0;
 
+  // Calculate remaining time from synced timestamp
   useEffect(() => {
-    if (isPaused || remaining <= 0) return;
+    if (timerStartedAt) {
+      const elapsed = (Date.now() - timerStartedAt) / 1000;
+      const base = timerPausedRemaining ?? secondsPerPerson;
+      setRemaining(Math.max(0, Math.round(base - elapsed)));
+    } else if (timerPausedRemaining != null) {
+      setRemaining(Math.max(0, timerPausedRemaining));
+    } else {
+      setRemaining(secondsPerPerson);
+    }
+  }, [timerStartedAt, timerPausedRemaining, secondsPerPerson]);
+
+  // Tick every second when running
+  useEffect(() => {
+    if (isPaused || isExpired) return;
 
     const interval = setInterval(() => {
-      setRemaining((prev) => {
-        const next = prev - 1;
-        if (next <= 0) {
-          onTimeUpRef.current();
-          return 0;
-        }
-        return next;
-      });
+      if (!timerStartedAt) return;
+      const elapsed = (Date.now() - timerStartedAt) / 1000;
+      const base = timerPausedRemaining ?? secondsPerPerson;
+      setRemaining(Math.max(0, Math.round(base - elapsed)));
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [isPaused, remaining]);
+  }, [isPaused, isExpired, timerStartedAt, timerPausedRemaining, secondsPerPerson]);
 
-  const togglePause = useCallback(() => {
-    setIsPaused((prev) => !prev);
-  }, []);
+  const handleTogglePause = useCallback(() => {
+    if (isPaused) {
+      if (timerPausedRemaining != null && timerPausedRemaining > 0) {
+        onResume();
+      } else {
+        onStart();
+      }
+    } else {
+      onPause(remaining);
+    }
+  }, [isPaused, remaining, timerPausedRemaining, onPause, onResume, onStart]);
 
-  const reset = useCallback(() => {
-    setRemaining(secondsPerPerson);
-    setIsPaused(false);
-  }, [secondsPerPerson]);
+  const handleReset = useCallback(() => {
+    onStart();
+  }, [onStart]);
 
   const minutes = Math.floor(remaining / 60);
   const seconds = remaining % 60;
@@ -58,6 +87,7 @@ export function Timer({ secondsPerPerson, onTimeUp }: TimerProps) {
         className={cn(
           "font-mono text-lg font-bold tabular-nums",
           isLow && "text-destructive animate-pulse",
+          isExpired && "text-destructive animate-pulse",
         )}
       >
         {String(minutes).padStart(2, "0")}:{String(seconds).padStart(2, "0")}
@@ -67,24 +97,26 @@ export function Timer({ secondsPerPerson, onTimeUp }: TimerProps) {
         <div
           className={cn(
             "h-full rounded-full transition-all duration-1000",
-            isLow ? "bg-destructive" : "bg-primary",
+            isLow || isExpired ? "bg-destructive" : "bg-primary",
           )}
           style={{ width: widthPercent }}
         />
       </div>
 
-      <div className="flex gap-0.5">
-        <Button variant="ghost" size="icon-xs" onClick={togglePause}>
-          {isPaused ? (
-            <PlayIcon className="size-3" />
-          ) : (
-            <PauseIcon className="size-3" />
-          )}
-        </Button>
-        <Button variant="ghost" size="icon-xs" onClick={reset}>
-          <ArrowCounterClockwiseIcon className="size-3" />
-        </Button>
-      </div>
+      {isOrganizer ? (
+        <div className="flex gap-0.5">
+          <Button variant="ghost" size="icon-xs" onClick={handleTogglePause}>
+            {isPaused ? (
+              <PlayIcon className="size-3" />
+            ) : (
+              <PauseIcon className="size-3" />
+            )}
+          </Button>
+          <Button variant="ghost" size="icon-xs" onClick={handleReset}>
+            <ArrowCounterClockwiseIcon className="size-3" />
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

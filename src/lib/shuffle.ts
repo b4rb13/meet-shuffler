@@ -1,4 +1,4 @@
-import type { Participant, ShuffledParticipant } from "./types";
+import type { Participant, SessionParticipant, ShuffledParticipant } from "./types";
 
 function fisherYatesShuffle<T>(array: T[]): T[] {
   const result = [...array];
@@ -11,7 +11,7 @@ function fisherYatesShuffle<T>(array: T[]): T[] {
 
 export function shuffleParticipants(
   participants: Participant[],
-): ShuffledParticipant[] {
+): SessionParticipant[] {
   const active = participants.filter((p) => !p.isExcluded);
   if (active.length === 0) return [];
 
@@ -25,9 +25,7 @@ export function shuffleParticipants(
   const shuffled = fisherYatesShuffle(unpinned);
 
   const totalSlots = active.length;
-  const result: (ShuffledParticipant | null)[] = new Array(totalSlots).fill(
-    null,
-  );
+  const result: (SessionParticipant | null)[] = new Array(totalSlots).fill(null);
 
   for (const p of pinned) {
     const idx = (p.pinnedPosition ?? 1) - 1;
@@ -37,6 +35,7 @@ export function shuffleParticipants(
         displayName: p.displayName,
         position: idx + 1,
         isPinned: true,
+        status: "pending",
       };
     }
   }
@@ -49,14 +48,25 @@ export function shuffleParticipants(
         displayName: shuffled[shuffleIdx].displayName,
         position: i + 1,
         isPinned: false,
+        status: "pending",
       };
       shuffleIdx++;
     }
   }
 
-  return result.filter(Boolean) as ShuffledParticipant[];
+  return result.filter(Boolean) as SessionParticipant[];
 }
 
+export function formatSessionOrder(order: SessionParticipant[]): string {
+  return order
+    .map(
+      (p) =>
+        `${p.position}. ${p.displayName}${p.isPinned ? " (pinned)" : ""}${p.status === "done" ? " ✓" : p.status === "speaking" ? " 🎤" : ""}`,
+    )
+    .join("\n");
+}
+
+/** @deprecated Use shuffleParticipants which now returns SessionParticipant[] */
 export function formatShuffledOrder(order: ShuffledParticipant[]): string {
   return order
     .map(

@@ -5,19 +5,6 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        source: "/:path*",
-        headers: [
-          {
-            key: "Cross-Origin-Opener-Policy",
-            value: "same-origin",
-          },
-          {
-            key: "Cross-Origin-Embedder-Policy",
-            value: "require-corp",
-          },
-        ],
-      },
-      {
         source: "/sidepanel",
         headers: [
           {
@@ -26,7 +13,8 @@ const nextConfig: NextConfig = {
           },
           {
             key: "Content-Security-Policy",
-            value: "frame-ancestors https://meet.google.com",
+            value:
+              "frame-ancestors https://meet.google.com",
           },
         ],
       },
@@ -39,7 +27,8 @@ const nextConfig: NextConfig = {
           },
           {
             key: "Content-Security-Policy",
-            value: "frame-ancestors https://meet.google.com",
+            value:
+              "frame-ancestors https://meet.google.com",
           },
         ],
       },
