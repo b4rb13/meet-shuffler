@@ -188,7 +188,6 @@ export default function SidePanelPage() {
           <CompletedView
             session={session}
             meetingCode={meetingCode}
-            isOrganizer={isOrganizer}
           />
         ) : (
           /* Setup mode */

@@ -18,13 +18,11 @@ import { cn } from "@/lib/utils";
 interface CompletedViewProps {
   session: Session;
   meetingCode: string;
-  isOrganizer: boolean;
 }
 
 export function CompletedView({
   session,
   meetingCode,
-  isOrganizer,
 }: CompletedViewProps) {
   const [showPunchline, setShowPunchline] = useState(false);
 
@@ -112,16 +110,12 @@ export function CompletedView({
         </Card>
       ) : null}
 
-      {/* Start new session */}
-      {isOrganizer ? (
-        <>
-          <Separator />
-          <Button variant="outline" size="sm" onClick={handleNewSession}>
-            <ArrowsClockwiseIcon data-icon="inline-start" />
-            Start New Session
-          </Button>
-        </>
-      ) : null}
+      {/* Start new session -- available to everyone after session ends */}
+      <Separator />
+      <Button variant="outline" size="sm" onClick={handleNewSession}>
+        <ArrowsClockwiseIcon data-icon="inline-start" />
+        Start New Session
+      </Button>
     </div>
   );
 }
